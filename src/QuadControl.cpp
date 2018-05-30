@@ -45,6 +45,7 @@ void QuadControl::Init()
 
   minMotorThrust = config->Get(_config + ".minMotorThrust", 0);
   maxMotorThrust = config->Get(_config + ".maxMotorThrust", 100);
+
 #else
   // load params from PX4 parameter system
   //TODO
@@ -70,10 +71,30 @@ VehicleCommand QuadControl::GenerateMotorCommands(float collThrustCmd, V3F momen
 
   ////////////////////////////// BEGIN STUDENT CODE ///////////////////////////
 
-  cmd.desiredThrustsN[0] = mass * 9.81f / 4.f; // front left
-  cmd.desiredThrustsN[1] = mass * 9.81f / 4.f; // front right
-  cmd.desiredThrustsN[2] = mass * 9.81f / 4.f; // rear left
-  cmd.desiredThrustsN[3] = mass * 9.81f / 4.f; // rear right
+  // Perpendicular distance between x-axis and rotor
+  float l = L/sqrt(2.0);
+  
+  float f_total = collThrustCmd;
+  float f_x = momentCmd.x/l;
+  float f_y = momentCmd.y/l;
+  
+  // Drag/thrust ratio kappa = torque/thrust
+  // Z-axis is positive down
+  float f_z = -(momentCmd.z/kappa);
+  
+  /*
+          *     *
+           \   /            x
+            \ /             ^
+             =              |
+            / \             '---> y
+           /   \
+          *     *
+  */
+  cmd.desiredThrustsN[0] = (f_total + f_x + f_y + f_z) / 4.f; // front left
+  cmd.desiredThrustsN[1] = (f_total - f_x + f_y - f_z) / 4.f; // front right
+  cmd.desiredThrustsN[2] = (f_total + f_x - f_y - f_z) / 4.f; // rear left
+  cmd.desiredThrustsN[3] = (f_total - f_x - f_y + f_z) / 4.f; // rear right
 
   /////////////////////////////// END STUDENT CODE ////////////////////////////
 
@@ -98,8 +119,12 @@ V3F QuadControl::BodyRateControl(V3F pqrCmd, V3F pqr)
 
   ////////////////////////////// BEGIN STUDENT CODE ///////////////////////////
 
+  V3F inertia(Ixx, Iyy, Izz);
   
-
+  // Calculate the desired moment using Inertia * P controller constant * rate of change
+  momentCmd = (pqrCmd - pqr) * kpPQR * inertia;
+  
+  //momentCmd.norm();
   /////////////////////////////// END STUDENT CODE ////////////////////////////
 
   return momentCmd;
@@ -128,9 +153,22 @@ V3F QuadControl::RollPitchControl(V3F accelCmd, Quaternion<float> attitude, floa
   Mat3x3F R = attitude.RotationMatrix_IwrtB();
 
   ////////////////////////////// BEGIN STUDENT CODE ///////////////////////////
+  // Convert collective thrust to accelaration
+  float collAccCmd = -collThrustCmd/mass;
+  
+  float b_x_cmd = accelCmd.x / collAccCmd;
+  float b_y_cmd = accelCmd.y / collAccCmd;
+  
+  float b_x_act = R(0, 2);
+  float b_y_act = R(1, 2);
+  
+  float b_x_cmd_dot = kpBank * (b_x_cmd - b_x_act);
+  float b_y_cmd_dot = kpBank * (b_y_cmd - b_y_act);
+  
 
-
-
+  pqrCmd.x = ((1.0/R(2, 2)) * (R(1, 0)*b_x_cmd_dot - R(0, 0)*b_y_cmd_dot));
+  pqrCmd.y = ((1.0/R(2, 2)) * (R(1, 1)*b_x_cmd_dot - R(0, 1)*b_y_cmd_dot));
+  
   /////////////////////////////// END STUDENT CODE ////////////////////////////
 
   return pqrCmd;
@@ -161,7 +199,15 @@ float QuadControl::AltitudeControl(float posZCmd, float velZCmd, float posZ, flo
 
   ////////////////////////////// BEGIN STUDENT CODE ///////////////////////////
 
+  // Constrain the max velocity in z direction (Z is +ve down)
+  velZCmd = CONSTRAIN(velZCmd, -maxAscentRate, maxDescentRate);
+  
+  float acclZDesired = kpPosZ * (posZCmd - posZ) + kpVelZ * (velZCmd - velZ) + accelZCmd;
 
+  thrust = (mass * acclZDesired)/R(2,2);
+  
+  // Constrain the thrust
+  thrust = CONSTRAIN(thrust, minMotorThrust, maxMotorThrust);
 
   /////////////////////////////// END STUDENT CODE ////////////////////////////
   
@@ -199,8 +245,17 @@ V3F QuadControl::LateralPositionControl(V3F posCmd, V3F velCmd, V3F pos, V3F vel
 
   ////////////////////////////// BEGIN STUDENT CODE ///////////////////////////
 
+  // Constrain the desired velocity
+  velCmd.x = CONSTRAIN(velCmd.x, -maxSpeedXY, maxSpeedXY);
+  velCmd.y = CONSTRAIN(velCmd.y, -maxSpeedXY, maxSpeedXY);
   
+  accelCmd.x += kpPosXY * (posCmd.x - pos.x) + kpVelXY * (velCmd.x - vel.x) + accelCmdFF.x;
+  accelCmd.y += kpPosXY * (posCmd.y - pos.y) + kpVelXY * (velCmd.y - vel.y) + accelCmdFF.y;
 
+  // Constrain the desired acceleration
+  accelCmd.x = CONSTRAIN(accelCmd.x, -maxAccelXY, maxAccelXY);
+  accelCmd.y = CONSTRAIN(accelCmd.y, -maxAccelXY, maxAccelXY);
+  
   /////////////////////////////// END STUDENT CODE ////////////////////////////
 
   return accelCmd;
