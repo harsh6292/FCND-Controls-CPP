@@ -198,16 +198,25 @@ float QuadControl::AltitudeControl(float posZCmd, float velZCmd, float posZ, flo
   float thrust = 0;
 
   ////////////////////////////// BEGIN STUDENT CODE ///////////////////////////
-
+  
   // Constrain the max velocity in z direction (Z is +ve down)
   velZCmd = CONSTRAIN(velZCmd, -maxAscentRate, maxDescentRate);
   
-  float acclZDesired = kpPosZ * (posZCmd - posZ) + kpVelZ * (velZCmd - velZ) + accelZCmd;
+  float posErrorZ = posZCmd - posZ;
+  float velErrorZ = velZCmd - velZ;
+  
+  integratedAltitudeError += posErrorZ * dt;
+  
+  float posDotZ = kpPosZ * posErrorZ;
+  float velDotZ = kpVelZ * velErrorZ;
+  float velIntZ = KiPosZ * integratedAltitudeError;
+  
+  float acclZDesired = posDotZ + velDotZ + velIntZ + accelZCmd;
 
-  thrust = (mass * acclZDesired)/R(2,2);
+  thrust = ((CONST_GRAVITY - acclZDesired) * mass)/R(2,2);
   
   // Constrain the thrust
-  thrust = CONSTRAIN(thrust, minMotorThrust, maxMotorThrust);
+  thrust = CONSTRAIN(thrust, (4.0*minMotorThrust), (4.0*maxMotorThrust));
 
   /////////////////////////////// END STUDENT CODE ////////////////////////////
   
@@ -246,12 +255,29 @@ V3F QuadControl::LateralPositionControl(V3F posCmd, V3F velCmd, V3F pos, V3F vel
   ////////////////////////////// BEGIN STUDENT CODE ///////////////////////////
 
   // Constrain the desired velocity
-  velCmd.x = CONSTRAIN(velCmd.x, -maxSpeedXY, maxSpeedXY);
-  velCmd.y = CONSTRAIN(velCmd.y, -maxSpeedXY, maxSpeedXY);
+  float posErrorX = posCmd.x - pos.x;
+  float posErrorY = posCmd.y - pos.y;
   
-  accelCmd.x += kpPosXY * (posCmd.x - pos.x) + kpVelXY * (velCmd.x - vel.x) + accelCmdFF.x;
-  accelCmd.y += kpPosXY * (posCmd.y - pos.y) + kpVelXY * (velCmd.y - vel.y) + accelCmdFF.y;
+  float posDotX = kpPosXY * posErrorX + velCmd.x;
+  float posDotY = kpPosXY * posErrorY + velCmd.y;
+  
+  
+  posDotX = CONSTRAIN(posDotX, -maxSpeedXY, maxSpeedXY);
+  posDotY = CONSTRAIN(posDotY, -maxSpeedXY, maxSpeedXY);
+  
+  
+  float velErrorX = posDotX - vel.x;
+  float velErrorY = posDotY - vel.y;
+  
+  float velDotX = kpVelXY * velErrorX;
+  float velDotY = kpVelXY * velErrorY;
+  
+  
+  // Add feed-forward acceleration value to desired acceleration
+  accelCmd.x += velDotX;
+  accelCmd.y += velDotY;
 
+  
   // Constrain the desired acceleration
   accelCmd.x = CONSTRAIN(accelCmd.x, -maxAccelXY, maxAccelXY);
   accelCmd.y = CONSTRAIN(accelCmd.y, -maxAccelXY, maxAccelXY);
@@ -277,7 +303,19 @@ float QuadControl::YawControl(float yawCmd, float yaw)
   float yawRateCmd=0;
   ////////////////////////////// BEGIN STUDENT CODE ///////////////////////////
 
-
+  // Unwrap the commanded radial angle to range [-pi, pi]
+  yawCmd = fmodf(yawCmd, M_PI);
+  
+  float yawError = (yawCmd - yaw);
+  
+  if (yawError > M_PI) {
+    yawError -= 2.0*M_PI;
+  } else if (yawError < -M_PI) {
+    yawError += 2.0*M_PI;
+  }
+  
+  yawRateCmd = kpYaw * yawError;
+  
   /////////////////////////////// END STUDENT CODE ////////////////////////////
 
   return yawRateCmd;
